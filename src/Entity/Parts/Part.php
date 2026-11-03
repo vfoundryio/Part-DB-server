@@ -61,6 +61,7 @@ use App\EntityListeners\TreeCacheInvalidationListener;
 use App\Mcp\DTO\AddPartStockInput;
 use App\Mcp\DTO\AdvancedPartSearchInput;
 use App\Mcp\DTO\CreatePartInput;
+use App\Mcp\DTO\CreateProjectBuildPartInput;
 use App\Mcp\DTO\DeletePartInput;
 use App\Mcp\DTO\ElementByIdInput;
 use App\Mcp\DTO\StocktakePartLotInput;
@@ -72,6 +73,8 @@ use App\State\Mcp\AdvancedPartSearchInputProvider;
 use App\State\Mcp\AdvancedSearchPartsProcessor;
 use App\State\Mcp\CreatePartInputProvider;
 use App\State\Mcp\CreatePartProcessor;
+use App\State\Mcp\CreateProjectBuildPartInputProvider;
+use App\State\Mcp\CreateProjectBuildPartProcessor;
 use App\State\Mcp\DeletePartProcessor;
 use App\State\Mcp\GetPartByIdProcessor;
 use App\State\Mcp\GetPartPreviewImageProcessor;
@@ -186,6 +189,20 @@ use Symfony\Component\Validator\Context\ExecutionContextInterface;
             validate: false,
             provider: CreatePartInputProvider::class, // Entity validation is done manually in CreatePartProcessor, not on the (barely-constrained) input DTO
             processor: CreatePartProcessor::class
+        ),
+        'create_project_build_part' => new McpTool(
+            title: 'Create the build part of a project',
+            description: 'Create the part that represents the finished builds of a project in stock (its "build part"), like the "create build part" button on the project\'s edit page. Only "projectId" is required; the part is initialized from the project (its name and description, tagged "project-build"), and accepts every create_part field (e.g. categoryId, which every part needs, or partLots) to override or extend that. Fails if the project already has a build part - an existing build part is never replaced. Returns the new part, including its database ID.',
+            annotations: ['readOnlyHint' => false, 'destructiveHint' => false, 'idempotentHint' => false, 'openWorldHint' => false],
+            normalizationContext: [
+                'groups' => ['part:read', 'provider_reference:read', 'api:basic:read', 'part_lot:read', 'orderdetail:read', 'pricedetail:read', 'parameter:read', 'attachment:read', 'eda_info:read'],
+                'item_uri_template' => '/api/parts/{id}',
+            ],
+            security: 'is_granted("@parts.create")', // Collection-level gate only (it also hides the tool from tools/list for users without it) - the per-object check is manual, inside the processor.
+            input: CreateProjectBuildPartInput::class,
+            validate: true, // Only checks the input DTO (projectId given); entity validation is done manually in the processor
+            provider: CreateProjectBuildPartInputProvider::class,
+            processor: CreateProjectBuildPartProcessor::class
         ),
         'update_part' => new McpTool(
             title: 'Update an existing part',

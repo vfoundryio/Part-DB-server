@@ -39,10 +39,13 @@ use ApiPlatform\OpenApi\Model\Operation;
 use ApiPlatform\Serializer\Filter\PropertyFilter;
 use App\ApiPlatform\Filter\LikeFilter;
 use App\Entity\Attachments\Attachment;
+use App\Mcp\DTO\CreateProjectInput;
 use App\Mcp\DTO\ElementByIdInput;
 use App\Mcp\DTO\StructuralElementOverview;
 use App\Mcp\DTO\StructuralElementSearchInput;
 use App\Repository\Parts\DeviceRepository;
+use App\State\Mcp\CreateProjectInputProvider;
+use App\State\Mcp\CreateProjectProcessor;
 use App\State\Mcp\GetStructuralElementDetailsProcessor;
 use App\State\Mcp\ListStructuralElementsProcessor;
 use App\Validator\Constraints\UniqueObjectCollection;
@@ -103,6 +106,17 @@ use Symfony\Component\Validator\Context\ExecutionContextInterface;
             input: ElementByIdInput::class,
             validate: true,
             processor: GetStructuralElementDetailsProcessor::class,
+        ),
+        'create_project' => new McpTool(
+            title: 'Create a new project',
+            description: 'Create a new project. Only "name" is required; every other field (description, status, comment, parent project, ...) is optional and, if omitted, the project is created with its normal default value for that field. Add parts to its BOM afterwards with add_project_bom_entry, and create the part representing its builds with create_project_build_part.',
+            annotations: ['readOnlyHint' => false, 'destructiveHint' => false, 'idempotentHint' => false, 'openWorldHint' => false],
+            normalizationContext: ['groups' => ['project:read', 'api:basic:read']],
+            security: 'is_granted("@projects.create")', // Collection-level gate only (it also hides the tool from tools/list for users without it) - the per-object check is manual, inside the processor.
+            input: CreateProjectInput::class,
+            validate: true, // Only checks the input DTO (name given); entity validation is done manually in the processor
+            provider: CreateProjectInputProvider::class,
+            processor: CreateProjectProcessor::class,
         ),
     ],
 )]
