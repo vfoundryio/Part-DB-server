@@ -33,6 +33,7 @@ use ApiPlatform\Metadata\ApiResource;
 use ApiPlatform\Metadata\Delete;
 use ApiPlatform\Metadata\Get;
 use ApiPlatform\Metadata\GetCollection;
+use ApiPlatform\Metadata\McpTool;
 use ApiPlatform\Metadata\Patch;
 use ApiPlatform\Metadata\Post;
 use ApiPlatform\Serializer\Filter\PropertyFilter;
@@ -44,6 +45,8 @@ use App\Entity\Base\TimestampTrait;
 use App\Entity\Contracts\NamedElementInterface;
 use App\Entity\Contracts\TimeStampableInterface;
 use App\Entity\UserSystem\User;
+use App\Mcp\DTO\AddPartLotInput;
+use App\State\Mcp\AddPartLotProcessor;
 use App\Validator\Constraints\Selectable;
 use App\Validator\Constraints\ValidPartLot;
 use Doctrine\ORM\Mapping as ORM;
@@ -76,6 +79,18 @@ use Symfony\Component\Validator\Context\ExecutionContextInterface;
     ],
     normalizationContext: ['groups' => ['part_lot:read', 'part_lot:read:standalone',  'api:basic:read', 'pricedetail:read'], 'openapi_definition_name' => 'Read'],
     denormalizationContext: ['groups' => ['part_lot:write', 'api:basic:write'], 'openapi_definition_name' => 'Write'],
+    mcp: [
+        'add_part_lot' => new McpTool(
+            title: 'Add a stock lot to a part',
+            description: 'Add one new stock lot to an existing part by the part\'s database ID: a storage location with an amount, or with unknown stock (instockUnknown). The part\'s existing lots are left untouched - unlike update_part, nothing has to be resent and nothing is removed. To change the stock of an existing lot use withdraw_part_stock/add_part_stock/stocktake_part_lot instead. Returns the new lot, including its database ID.',
+            annotations: ['readOnlyHint' => false, 'destructiveHint' => false, 'idempotentHint' => false, 'openWorldHint' => false],
+            normalizationContext: ['groups' => ['part_lot:read', 'part_lot:read:standalone', 'api:basic:read']],
+            security: 'is_granted("@parts.edit")', // Collection-level gate only (it also hides the tool from tools/list for users without it) - the per-object check is manual, inside the processor.
+            input: AddPartLotInput::class,
+            validate: true,
+            processor: AddPartLotProcessor::class,
+        ),
+    ],
 )]
 #[ApiFilter(PropertyFilter::class)]
 #[ApiFilter(LikeFilter::class, properties: ["description", "comment", "user_barcode"])]

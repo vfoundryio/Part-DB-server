@@ -33,6 +33,7 @@ use ApiPlatform\Metadata\Delete;
 use ApiPlatform\Metadata\Get;
 use ApiPlatform\Metadata\GetCollection;
 use ApiPlatform\Metadata\Link;
+use ApiPlatform\Metadata\McpTool;
 use ApiPlatform\Metadata\Patch;
 use ApiPlatform\Metadata\Post;
 use ApiPlatform\OpenApi\Model\Operation;
@@ -45,6 +46,8 @@ use App\Entity\Contracts\NamedElementInterface;
 use App\Entity\Contracts\TimeStampableInterface;
 use App\Entity\Parts\Part;
 use App\Entity\Parts\Supplier;
+use App\Mcp\DTO\AddPartOrderdetailInput;
+use App\State\Mcp\AddPartOrderdetailProcessor;
 use DateTimeImmutable;
 use Doctrine\Common\Collections\ArrayCollection;
 use Doctrine\Common\Collections\Collection;
@@ -80,6 +83,18 @@ use Symfony\Component\Validator\Constraints\Length;
     ],
     normalizationContext: ['groups' => ['orderdetail:read', 'orderdetail:read:standalone',  'api:basic:read', 'pricedetail:read'], 'openapi_definition_name' => 'Read'],
     denormalizationContext: ['groups' => ['orderdetail:write', 'api:basic:write'], 'openapi_definition_name' => 'Write'],
+    mcp: [
+        'add_part_orderdetail' => new McpTool(
+            title: 'Add an orderdetail to a part',
+            description: 'Add one new orderdetail (a supplier the part can be ordered from, with the supplier\'s part number and optional price breaks) to an existing part by the part\'s database ID. The part\'s existing orderdetails are left untouched - unlike update_part, nothing has to be resent and nothing is removed. Returns the new orderdetail, including its database ID and those of its price breaks.',
+            annotations: ['readOnlyHint' => false, 'destructiveHint' => false, 'idempotentHint' => false, 'openWorldHint' => false],
+            normalizationContext: ['groups' => ['orderdetail:read', 'orderdetail:read:standalone', 'api:basic:read', 'pricedetail:read']],
+            security: 'is_granted("@parts.edit")', // Collection-level gate only (it also hides the tool from tools/list for users without it) - the per-object check is manual, inside the processor.
+            input: AddPartOrderdetailInput::class,
+            validate: true,
+            processor: AddPartOrderdetailProcessor::class,
+        ),
+    ],
 )]
 #[ApiFilter(PropertyFilter::class)]
 #[ApiFilter(PropertyFilter::class)]

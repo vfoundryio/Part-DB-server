@@ -26,6 +26,7 @@ use ApiPlatform\Metadata\Operation;
 use ApiPlatform\State\ProcessorInterface;
 use ApiPlatform\Validator\ValidatorInterface;
 use App\Entity\Attachments\Attachment;
+use App\Entity\Base\AbstractDBElement;
 use App\Entity\Parameters\PartParameter;
 use App\Entity\Parts\AssociationType;
 use App\Entity\Parts\Category;
@@ -60,9 +61,10 @@ use Symfony\Component\HttpKernel\Exception\BadRequestHttpException;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
- * Shared by CreatePartProcessor and UpdatePartProcessor. Owns the process() method as a template: the global
+ * Shared by CreatePartProcessor, UpdatePartProcessor, CreateProjectBuildPartProcessor and the additive add_part_*
+ * processors (see AbstractAddToPartProcessor). Owns the process() method as a template: the global
  * editing-enabled guard and expected-error-to-CallToolResult wrapping (McpToolErrorHandling) happen exactly once,
- * here, so neither subclass can forget them - each subclass only implements mutatePart() with its own
+ * here, so no subclass can forget them - each subclass only implements mutatePart() with its own
  * entity-resolution/permission-check/field-application logic. Also provides the shared helpers for resolving
  * related entities by ID (mirrors GetPartByIdProcessor's manual find()-or-404 idiom) and reconciling the nested
  * collection inputs (partLots/parameters/orderdetails/pricedetails/associatedPartsAsOwner) onto the corresponding
@@ -80,7 +82,7 @@ abstract class AbstractPartMutationProcessor implements ProcessorInterface
     ) {
     }
 
-    final public function process(mixed $data, Operation $operation, array $uriVariables = [], array $context = []): Part|CallToolResult
+    final public function process(mixed $data, Operation $operation, array $uriVariables = [], array $context = []): AbstractDBElement|CallToolResult
     {
         return $this->runCatchingExpectedErrors(function () use ($data) {
             $this->mcpSettings->assertEditingEnabled();
@@ -89,7 +91,12 @@ abstract class AbstractPartMutationProcessor implements ProcessorInterface
         });
     }
 
-    abstract protected function mutatePart(mixed $data): Part;
+    /**
+     * Returns the element the tool reports back to the caller: the part itself for create_part/update_part, or the
+     * newly created row (part lot, parameter, orderdetail, association) for the additive add_part_* tools, so the
+     * caller gets that row's id directly.
+     */
+    abstract protected function mutatePart(mixed $data): AbstractDBElement;
 
     /**
      * Applies every field AbstractPartWriteInput declares (i.e. everything both create_part and update_part
