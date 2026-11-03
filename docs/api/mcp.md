@@ -21,7 +21,8 @@ many different AI clients and applications.
 
 {: .warning }
 > Giving an AI assistant access to your inventory means it can read everything the connected user account is allowed
-> to see, and - for the tools listed under "Parts" below - create and change parts and stock levels on your behalf.
+> to see, and - for the tools marked *(write)* below - create and change parts, stock levels and projects on your
+> behalf.
 > Only connect trusted AI clients and keep your API token secret, just like you would for the
 > [REST API]({% link api/authentication.md %}). If you only want an assistant to look things up, connect it with a
 > **Read-Only** scoped token or OAuth2 grant (see [Permissions](#permissions) below) - this blocks it from calling any
@@ -245,10 +246,11 @@ just need to provide:
 
 ## Available tools
 
-The following MCP tools are currently available. Unless noted otherwise, a tool only reads data; the part-creation,
-part-editing, part-deletion and stock-adjustment tools below are the exception and require both an **Edit**-scoped
-API token/OAuth2 grant (see [Permissions](#permissions) above) and the corresponding permission (`parts.create`,
-`parts.edit`, `parts.delete`, or `parts_stock.withdraw`/`add`/`stocktake`) on the underlying user account.
+The following MCP tools are currently available. Unless noted otherwise, a tool only reads data; the tools marked
+*(write)* below are the exception and require both an **Edit**-scoped API token/OAuth2 grant (see
+[Permissions](#permissions) above) and the corresponding permission (e.g. `parts.create`, `parts.edit`,
+`parts.delete`, `parts_stock.withdraw`/`add`/`stocktake`, `projects.create` or `projects.edit`) on the underlying user
+account. A tool whose permission the user lacks is not listed to the client at all.
 
 ### Parts
 
@@ -283,7 +285,15 @@ API token/OAuth2 grant (see [Permissions](#permissions) above) and the correspon
   changed; anything you omit - including nested collections like stock lots or parameters - is left untouched.
   Stock amounts can only be set here when adding a brand-new lot; to change an *existing* lot's amount, use one of
   the stock-adjustment tools below instead. `providerKey`/`providerId` link or unlink the part to an external info
-  provider (e.g. Digikey) - set both to link it, both to null to unlink; they must be changed together.
+  provider (e.g. Digikey) - set both to link it, both to null to unlink; they must be changed together. Note that a
+  nested collection you *do* provide replaces the part's whole collection (an existing item left out is removed) - to
+  add a single item without resending the others, use the `add_part_*` tools below.
+* **add_part_lot** / **add_part_parameter** / **add_part_orderdetail** / **add_part_association** *(write)* - Add
+  exactly one new stock lot (a storage location with an amount, or with unknown stock), parameter, orderdetail
+  (supplier, supplier part number and optional price breaks) or associated part to an existing part, by the part's
+  database ID. The part's existing lots, parameters, orderdetails and associations are never changed or removed.
+  Each returns the newly created row, including its database ID. They need the `parts.edit` permission on the part,
+  just like adding these in the web UI.
 * **delete_part** *(write)* – Permanently delete a part by its database ID, including its stock lots, parameters,
   orderdetails and associations. This cannot be undone and there is no confirmation step.
 * **withdraw_part_stock** / **add_part_stock** / **stocktake_part_lot** *(write)* – Adjust the stock of a part lot
@@ -323,6 +333,21 @@ Measurement units and part custom states don't have write tools yet.
 * **list_projects** / **get_project_details** – Same behavior as the master data tools above.
   `get_project_details` additionally returns the project's BOM entries, status, description and associated build
   part.
+* **create_project** *(write)* – Create a new project. Only `name` is required; `description`, `status` (`draft`,
+  `planning`, `in_production`, `finished` or `archived`), `comment`, `parentId`, `notSelectable` and
+  `alternativeNames` are optional. Requires the `projects.create` permission.
+* **create_project_build_part** *(write)* – Create the part that represents the finished builds of a project in
+  stock, like the "create build part" button on the project's edit page: the part is initialized from the project
+  (name, description, tagged `project-build`) and accepts every `create_part` field (e.g. `categoryId`) on top. Fails
+  if the project already has a build part - an existing build part is never replaced. Requires the `parts.create`
+  permission.
+* **add_project_bom_entry** *(write)* – Add one new entry to a project's BOM: either a part (`partId`) with its
+  `quantity` and optional `mountnames`, or a non-part entry (`name`, optionally with a `price`). A part (and a name)
+  can only be in a BOM once. Existing BOM entries are left untouched. Requires the `projects.edit` permission on the
+  project.
+* **update_project_bom_entry** *(write)* – Change the `quantity`, `mountnames` and/or `comment` of an existing BOM
+  entry by its database ID; omitted fields are left untouched, and the part an entry is for cannot be changed.
+  Requires the `projects.edit` permission on the project. BOM entries cannot be removed via MCP.
 
 ### Attachments
 
