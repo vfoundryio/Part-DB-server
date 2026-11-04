@@ -49,10 +49,13 @@ use ApiPlatform\Metadata\ApiFilter;
 use ApiPlatform\Metadata\ApiResource;
 use ApiPlatform\Metadata\Delete;
 use ApiPlatform\Metadata\Get;
+use ApiPlatform\Metadata\McpTool;
 use ApiPlatform\Metadata\Patch;
 use ApiPlatform\Metadata\Post;
 use App\ApiPlatform\Filter\LikeFilter;
+use App\Mcp\DTO\AddPartParameterInput;
 use App\Repository\ParameterRepository;
+use App\State\Mcp\AddPartParameterProcessor;
 use App\Validator\Constraints\UniqueEntityIgnoringOrphans;
 use App\Validator\UniqueValidatableInterface;
 use Doctrine\DBAL\Types\Types;
@@ -90,6 +93,18 @@ use function sprintf;
     ],
     normalizationContext: ['groups' => ['parameter:read', 'parameter:read:standalone',  'api:basic:read'], 'openapi_definition_name' => 'Read'],
     denormalizationContext: ['groups' => ['parameter:write', 'parameter:write:standalone', 'api:basic:write'], 'openapi_definition_name' => 'Write'],
+    mcp: [
+        'add_part_parameter' => new McpTool(
+            title: 'Add a parameter to a part',
+            description: 'Add one new parameter (e.g. "Voltage: 5V typ.", with optional min/typical/max values, a unit, or a text value) to an existing part by the part\'s database ID. The part\'s existing parameters are left untouched - unlike update_part, nothing has to be resent and nothing is removed. The name must be unique within its group on that part. Returns the new parameter, including its database ID.',
+            annotations: ['readOnlyHint' => false, 'destructiveHint' => false, 'idempotentHint' => false, 'openWorldHint' => false],
+            normalizationContext: ['groups' => ['parameter:read', 'parameter:read:standalone', 'api:basic:read']],
+            security: 'is_granted("@parts.edit")', // Collection-level gate only (it also hides the tool from tools/list for users without it) - the per-object check is manual, inside the processor.
+            input: AddPartParameterInput::class,
+            validate: true,
+            processor: AddPartParameterProcessor::class,
+        ),
+    ],
 )]
 #[ApiFilter(LikeFilter::class, properties: ["name", "symbol", "unit", "group", "value_text"])]
 #[ApiFilter(DateFilter::class, strategy: DateFilterInterface::EXCLUDE_NULL)]

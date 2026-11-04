@@ -31,12 +31,15 @@ use ApiPlatform\Metadata\ApiResource;
 use ApiPlatform\Metadata\Delete;
 use ApiPlatform\Metadata\Get;
 use ApiPlatform\Metadata\GetCollection;
+use ApiPlatform\Metadata\McpTool;
 use ApiPlatform\Metadata\Patch;
 use ApiPlatform\Metadata\Post;
 use ApiPlatform\Serializer\Filter\PropertyFilter;
 use App\ApiPlatform\Filter\LikeFilter;
 use App\Entity\Contracts\TimeStampableInterface;
+use App\Mcp\DTO\AddPartAssociationInput;
 use App\Repository\DBElementRepository;
+use App\State\Mcp\AddPartAssociationProcessor;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\Mapping as ORM;
 use App\Entity\Base\AbstractDBElement;
@@ -64,6 +67,18 @@ use Symfony\Component\Validator\Constraints\Length;
     ],
     normalizationContext: ['groups' => ['part_assoc:read', 'part_assoc:read:standalone',  'api:basic:read'], 'openapi_definition_name' => 'Read'],
     denormalizationContext: ['groups' => ['part_assoc:write', 'api:basic:write'], 'openapi_definition_name' => 'Write'],
+    mcp: [
+        'add_part_association' => new McpTool(
+            title: 'Add an associated part to a part',
+            description: 'Add one new association from an existing part (the owner, by its database ID) to another part, e.g. that it is compatible with or supersedes the other part. The part\'s existing associations are left untouched - unlike update_part, nothing has to be resent and nothing is removed. Returns the new association, including its database ID.',
+            annotations: ['readOnlyHint' => false, 'destructiveHint' => false, 'idempotentHint' => false, 'openWorldHint' => false],
+            normalizationContext: ['groups' => ['part_assoc:read', 'part_assoc:read:standalone', 'api:basic:read']],
+            security: 'is_granted("@parts.edit")', // Collection-level gate only (it also hides the tool from tools/list for users without it) - the per-object check is manual, inside the processor.
+            input: AddPartAssociationInput::class,
+            validate: true,
+            processor: AddPartAssociationProcessor::class,
+        ),
+    ],
 )]
 #[ApiFilter(PropertyFilter::class)]
 #[ApiFilter(LikeFilter::class, properties: ["other_type", "comment"])]

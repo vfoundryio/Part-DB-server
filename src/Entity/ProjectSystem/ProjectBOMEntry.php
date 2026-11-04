@@ -30,6 +30,7 @@ use ApiPlatform\Metadata\Delete;
 use ApiPlatform\Metadata\Get;
 use ApiPlatform\Metadata\GetCollection;
 use ApiPlatform\Metadata\Link;
+use ApiPlatform\Metadata\McpTool;
 use ApiPlatform\Metadata\Patch;
 use ApiPlatform\Metadata\Post;
 use ApiPlatform\OpenApi\Model\Operation;
@@ -42,6 +43,11 @@ use App\Entity\Base\AbstractDBElement;
 use App\Entity\Base\TimestampTrait;
 use App\Entity\Parts\Part;
 use App\Entity\PriceInformations\Currency;
+use App\Mcp\DTO\AddProjectBomEntryInput;
+use App\Mcp\DTO\UpdateProjectBomEntryInput;
+use App\State\Mcp\AddProjectBomEntryProcessor;
+use App\State\Mcp\UpdateProjectBomEntryInputProvider;
+use App\State\Mcp\UpdateProjectBomEntryProcessor;
 use App\Validator\Constraints\BigDecimal\BigDecimalPositive;
 use App\Validator\Constraints\Selectable;
 use Brick\Math\BigDecimal;
@@ -72,6 +78,29 @@ use Symfony\Component\Validator\Context\ExecutionContextInterface;
     ],
     normalizationContext: ['groups' => ['bom_entry:read', 'api:basic:read'], 'openapi_definition_name' => 'Read'],
     denormalizationContext: ['groups' => ['bom_entry:write', 'api:basic:write'], 'openapi_definition_name' => 'Write'],
+    mcp: [
+        'add_project_bom_entry' => new McpTool(
+            title: 'Add an entry to a project BOM',
+            description: 'Add one new entry to the BOM of an existing project by the project\'s database ID: either a part (partId) with the quantity one build needs, or a non-part entry such as "PCB fabrication" (name, optionally with a price). A part, and a name, can only be in a BOM once - use update_project_bom_entry to change an existing entry. The project\'s existing BOM entries are left untouched. Returns the new BOM entry, including its database ID.',
+            annotations: ['readOnlyHint' => false, 'destructiveHint' => false, 'idempotentHint' => false, 'openWorldHint' => false],
+            normalizationContext: ['groups' => ['bom_entry:read', 'api:basic:read']],
+            security: 'is_granted("@projects.edit")', // Collection-level gate only (it also hides the tool from tools/list for users without it) - the per-object check is manual, inside the processor.
+            input: AddProjectBomEntryInput::class,
+            validate: true,
+            processor: AddProjectBomEntryProcessor::class,
+        ),
+        'update_project_bom_entry' => new McpTool(
+            title: 'Update a project BOM entry',
+            description: 'Update the quantity, mountnames and/or comment of an existing project BOM entry by the entry\'s database ID (as returned by get_project_details or add_project_bom_entry). Only the fields you actually provide are changed; any field you omit is left untouched. The part or name the entry is for cannot be changed. Returns the updated BOM entry.',
+            annotations: ['readOnlyHint' => false, 'destructiveHint' => false, 'idempotentHint' => false, 'openWorldHint' => false],
+            normalizationContext: ['groups' => ['bom_entry:read', 'api:basic:read']],
+            security: 'is_granted("@projects.edit")', // Collection-level gate only (it also hides the tool from tools/list for users without it) - the per-object check is manual, inside the processor.
+            input: UpdateProjectBomEntryInput::class,
+            validate: true, // Only checks the input DTO (id given); entity validation is done manually in the processor
+            provider: UpdateProjectBomEntryInputProvider::class,
+            processor: UpdateProjectBomEntryProcessor::class,
+        ),
+    ],
 )]
 #[ApiFilter(PropertyFilter::class)]
 #[ApiFilter(LikeFilter::class, properties: ["name", "comment", 'mountnames'])]
