@@ -1,0 +1,155 @@
+name: vFoundry image
+
+# Builds the root Dockerfile on every push to a vfoundry-v* branch (in
+# practice, every merged PR) and pushes it to GHCR as
+#
+#   ghcr.io/vfoundryio/part-db:<upstream version>-vfoundry.<N>   e.g. 2.20.4-vfoundry.3
+#   ghcr.io/vfoundryio/part-db:sha-<short sha>
+#
+# and tags the commit v<upstream version>-vfoundry.<N> in git. The deployment
+# pins the image by DIGEST; the job summary prints the full reference to paste
+# there. See VFOUNDRY.md.
+#
+# Built the way upstream's docker_build.yml builds jbtronics/part-db1 (buildx,
+# context `.`, gha layer cache), but for linux/amd64 only: that is the only
+# platform vFoundry runs it on, and upstream's arm64/armv7 legs plus the
+# manifest-merge job exist only to serve the others. Add a matrix leg and a
+# merge job the way upstream does if that changes.
+#
+# GitHub-hosted runner: see the header of vfoundry-ci.yml.
+on:
+  push:
+    branches: ['vfoundry-v*']
+  # Re-publish the head of a vfoundry-v* branch, e.g. after a failed push.
+  # A commit that already has a version tag keeps it (see "Resolve version").
+  workflow_dispatch:
+
+# One publish per branch at a time, never cancelled: a run cancelled between
+# the image push and the git tag push would leave a published image with no
+# tag, and the next run would give it a second number.
+concurrency:
+  group: vfoundry-image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/vfoundryio/part-db
+
+jobs:
+  build:
+    if: startsWith(github.ref, 'refs/heads/vfoundry-v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write   # push the v<version>-vfoundry.<N> git tag
+      packages: write   # push to GHCR with the run's own GITHUB_TOKEN
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      # The upstream version is Part-DB's own VERSION file, so the image name
+      # follows the code after an upgrade without anyone editing this file.
+      # N counts the publishes of that upstream version, and the git tags are
+      # its source of truth (lowerdecks' release.yml does the same): N is one
+      # more than the highest v<version>-vfoundry.* tag. A commit that already
+      # carries one of those tags is a re-run and keeps its number.
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          base=$(tr -d '[:space:]' < VERSION)
+          if ! [[ "$base" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::VERSION holds '$base', not X.Y.Z"; exit 1
+          fi
+          prefix="v${base}-vfoundry."
+          tags=$(git ls-remote --tags --refs origin "refs/tags/${prefix}*")
+          last=0
+          existing=''
+          while read -r sha ref; do
+            n="${ref#refs/tags/"$prefix"}"
+            if ! [[ "$n" =~ ^[0-9]+$ ]]; then continue; fi
+            if (( n > last )); then last=$n; fi
+            if [ "$sha" = "$GITHUB_SHA" ]; then existing="${prefix}${n}"; fi
+          done <<< "$tags"
+          if [ -n "$existing" ]; then
+            tag="$existing"; new_tag=false
+            echo "$GITHUB_SHA is already tagged $tag; re-publishing under it."
+          else
+            tag="${prefix}$((last + 1))"; new_tag=true
+          fi
+          {
+            echo "tag=$tag"
+            echo "version=${tag#v}"
+            echo "new_tag=$new_tag"
+          } >> "$GITHUB_OUTPUT"
+          echo "This run publishes ${IMAGE}:${tag#v}"
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # The source label is what links the ghcr.io/vfoundryio/part-db package
+      # to this repository (and gives this repo's workflows write access to it).
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=sha
+          flavor: |
+            latest=false
+          labels: |
+            org.opencontainers.image.title=Part-DB (vFoundry)
+            org.opencontainers.image.description=Part-DB ${{ steps.version.outputs.version }}: upstream Part-DB with vFoundry's patches.
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=AGPL-3.0-or-later
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=part-db-amd64
+          cache-to: type=gha,mode=max,scope=part-db-amd64
+
+      # Last, so a tag only ever names a commit whose image was published.
+      - name: Tag the commit
+        if: steps.version.outputs.new_tag == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          git tag "$TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG"
+
+      - name: Summary
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          {
+            echo "### ${IMAGE}:${VERSION}"
+            echo
+            echo "Pinned reference for the deployment:"
+            echo
+            echo '```'
+            echo "${IMAGE}:${VERSION}@${DIGEST}"
+            echo '```'
+            echo
+            echo "Tags pushed:"
+            echo
+            echo '```'
+            echo "$TAGS"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

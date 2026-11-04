@@ -1,0 +1,185 @@
+name: vFoundry CI
+
+# vFoundry's PR gate for its fork of Part-DB, modeled on lowerdecks' ci.yml
+# and kept small: PHPUnit on the PHP version and database prod's image
+# exercises, PHPStan, and a no-push build of the image vfoundry-image.yml
+# ships. Branch model, upgrades and why upstream's own workflows are disabled
+# rather than deleted: VFOUNDRY.md.
+#
+# GitHub-hosted runners, NOT the self-hosted runners vFoundry's private repos
+# use: this fork is PUBLIC, so anyone can open a PR against it, and a PR job
+# on a self-hosted runner would run their code on vFoundry's own machines.
+# Standard hosted runners are free on a public repo.
+on:
+  pull_request:
+  push:
+    branches: ['vfoundry-v*']
+
+concurrency:
+  group: vfoundry-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  phpunit:
+    # The steps follow upstream's tests.yml, cut to the one matrix cell that
+    # matches prod: PHP 8.4 (the Dockerfile's PHP_VERSION). SQLite rather than
+    # prod's PostgreSQL because it needs no service; .env.test points
+    # DATABASE_URL at var/app_test.db. No coverage upload: there is no
+    # Codecov token here.
+    name: PHPUnit (PHP 8.4, SQLite)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      APP_ENV: test
+      SYMFONY_DEPRECATIONS_HELPER: disabled
+      CHECK_FOR_UPDATES: false
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@4424c9aab975b57bd706ee5a39c6b4334d6e4f60 # 2.40.0
+        with:
+          php-version: '8.4'
+          coverage: none
+          ini-values: xdebug.max_nesting_level=1000
+          extensions: mbstring, intl, gd, xsl, gmp, bcmath, :php-psr
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Install composer dependencies
+        run: composer install --prefer-dist --no-progress
+
+      # The frontend build is not optional: the controller tests render pages
+      # through Encore, which reads public/build/entrypoints.json. yarn build
+      # also needs vendor/, for the Symfony UX packages package.json links.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: yarn
+
+      - name: Install yarn dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Build frontend
+        run: yarn build
+
+      # .env.test enables the OAuth2 server and its tests sign real JWTs, so CI
+      # needs a keypair (upstream's tests.yml does the same).
+      - name: Generate OAuth2 keys
+        run: php bin/console --env test partdb:oauth:generate-keys -n
+
+      - name: Do migrations
+        run: php bin/console --env test doctrine:migrations:migrate -n
+
+      # Upstream's own fixtures command (it resets the autoincrement values).
+      # Its "database will be purged" prompt defaults to yes when the command
+      # is not interactive, so -n answers it; no `yes |` pipe is needed.
+      - name: Load fixtures
+        run: php bin/console --env test partdb:fixtures:load -n
+
+      - name: Run PHPUnit
+        run: ./bin/phpunit
+
+  phpstan:
+    # As upstream's static_analysis.yml runs it, on PHP 8.4 to match prod.
+    # phpstan.dist.neon sets the paths and level 5, and points the Symfony
+    # extension at the dev container, which cache:clear --env dev builds.
+    name: PHPStan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@4424c9aab975b57bd706ee5a39c6b4334d6e4f60 # 2.40.0
+        with:
+          php-version: '8.4'
+          coverage: none
+          ini-values: xdebug.max_nesting_level=1000
+          extensions: mbstring, intl, gd, xsl, gmp, bcmath, :php-psr
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - name: Install composer dependencies
+        run: composer install --prefer-dist --no-progress
+
+      - name: Generate dev container
+        run: php -d xdebug.max_nesting_level=1000 bin/console cache:clear --env dev
+
+      - name: Run PHPStan
+        run: vendor/bin/phpstan analyse --memory-limit=1G --no-progress --error-format=github
+
+  image:
+    # Build the image vfoundry-image.yml ships, WITHOUT pushing it, so a
+    # Dockerfile that no longer builds (most likely after an upstream upgrade)
+    # fails here instead of after merge. PRs only: on a push to a vfoundry-v*
+    # branch, vfoundry-image.yml builds the same thing and pushes it.
+    #
+    # contents: read and no registry login: this job cannot publish anything,
+    # which is what keeps it safe to run on a PR. It reads the gha cache that
+    # vfoundry-image.yml writes on the base branch (same scope), which a PR is
+    # allowed to restore.
+    if: github.event_name == 'pull_request'
+    name: Image build (no push)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Build image (no push)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=part-db-amd64
+          cache-to: type=gha,mode=max,scope=part-db-amd64
+
+  ci-gate:
+    # The single required check (lowerdecks' flywheel-gate pattern): branch
+    # protection on vfoundry-v* requires `ci-gate` and nothing else, so adding
+    # or renaming a job above never needs a settings change. Runs even when a
+    # job was skipped (image, on a push), and passes on success or skipped;
+    # only failure or cancelled fails it.
+    name: ci-gate
+    needs: [phpunit, phpstan, image]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Aggregate results
+        env:
+          RESULTS: ${{ needs.phpunit.result }} ${{ needs.phpstan.result }} ${{ needs.image.result }}
+        run: |
+          for r in $RESULTS; do
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
+              echo "ci-gate: a job failed ($r)"; exit 1; fi
+          done
+          echo "ci-gate: all jobs passed (success/skipped)"
